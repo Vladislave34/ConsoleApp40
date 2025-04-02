@@ -7,73 +7,134 @@ namespace ConsoleApp40
 {
     internal class Program
     {
+        private static DataBaseManager _dataBaseManager;
+        public static CancellationTokenSource cts; 
         static void Main(string[] args)
         {
             Console.InputEncoding = Encoding.UTF8;
             Console.OutputEncoding = Encoding.UTF8;
+
             Stopwatch stopwatch = new Stopwatch();
-            stopwatch.Start(); //Обчислюємо час роботи програми
+            stopwatch.Start();
 
+            _dataBaseManager = new DataBaseManager();
+            _dataBaseManager.GetConnectionEvent += DataBaseManager_GetConnectionEvent;
+            _dataBaseManager.DataInserted += _dataBaseManager_DataInserted;
 
-            ThreadAppContext threadAppContext = new ThreadAppContext();
-            threadAppContext.banan.Any();
-            DataBaseManager dataBaseManager = new DataBaseManager();
-            dataBaseManager.GetConnectionEvent += DataBaseManager_GetConnectionEvent;
-            dataBaseManager.UserAddedEvent += user => Console.WriteLine($"Event: User {user.Id} was added!");
+            Console.WriteLine("Підготовка програми до запуску ...");
 
-            insert(10, dataBaseManager);
             stopwatch.Stop();
-            //TimeSpan - змінна, яка може зберігаати, сек, мілісенди, хв, год, дні
-            TimeSpan ts = stopwatch.Elapsed; //Оперує тіками - одиниці часу
+            TimeSpan ts = stopwatch.Elapsed;
             Console.WriteLine($"Run time {ts}");
+        }
+        //private static void OnProcessExit(object sender, EventArgs e)
+        //{
+        //    Console.WriteLine("Програма завершується... Очікуємо завершення потоків.");
+        //    _dataBaseManager?.Dispose(); // Закриваємо підключення до БД
+        //}
+        private static void _dataBaseManager_DataInserted(int obj)
+        {
+            Console.WriteLine($"Insert data --{obj}--");
         }
         private static void DataBaseManager_GetConnectionEvent(ThreadAppContext threadAppContext)
         {
-            Console.WriteLine("Зєднання з БД успішно кількість бананів {0}", threadAppContext.banan.Count());
-        }
-        public static void insert(int count, DataBaseManager dataBaseManager)
-        {
-            var faker = new Faker<Banan>()
-                .RuleFor(u => u.FirstName, f => f.Name.FirstName())
-                .RuleFor(u => u.LastName, f => f.Name.LastName())
-                .RuleFor(u => u.Image, f => f.Internet.Avatar())
-                .RuleFor(u => u.Phone, f => f.Phone.PhoneNumber("+380 ## ### ## ##"))
-                .RuleFor(u => u.Sex, f => f.Random.Bool());
+            cts = new CancellationTokenSource();
+            var token = cts.Token;
+            DataBaseManager.mre.Set();
+            Console.WriteLine("З'єднання з БД успішне, кількість бананів {0}", threadAppContext.banan.Count());
 
-            for (int i = 0; i < count; i++)
+            Console.WriteLine("Вкажіть кількість користувачів");
+            if (!int.TryParse(Console.ReadLine(), out int count) || count <= 0)
             {
-                Banan newUser = faker.Generate();
-                newUser.Image = SaveImage( newUser.FirstName); 
-                dataBaseManager.AddUser(newUser);
-            }
-        }
-        public static string SaveImage(string userName)
-        {
-            string folderPath = "D:\\Git\\project_c_13\\ConsoleApp40\\image";
-            if (!Directory.Exists(folderPath))
-            {
-                Directory.CreateDirectory(folderPath);
+                Console.WriteLine("Некоректне значення. Введіть додатне число.");
+                return;
             }
 
-            string fileName = $"{userName}_{Guid.NewGuid()}.jpg";
-            string filePath = Path.Combine(folderPath, fileName);
+            // Вимірюємо час додавання одного користувача
+            Stopwatch estimateStopwatch = Stopwatch.StartNew();
+            _dataBaseManager.AddSingleUser();
+            estimateStopwatch.Stop();
 
-            string imageUrl = "https://thispersondoesnotexist.com/"; 
+            double timePerUser = estimateStopwatch.ElapsedMilliseconds;
+            double estimatedTime = (timePerUser * count) / 1000.0;
+            Console.WriteLine($"Прогнозований час: {estimatedTime:F2} секунд");
 
-            try
+            // Вимірювання фактичного часу
+            Stopwatch actualStopwatch = Stopwatch.StartNew();
+            _dataBaseManager.AddUsersMultithreaded(count);
+            actualStopwatch.Stop();
+
+            double actualTime = actualStopwatch.ElapsedMilliseconds / 1000.0;
+            Console.WriteLine($"Фактичний час: {actualTime:F2} секунд");
+            Console.WriteLine($"Різниця прогнозу та реальності: {Math.Abs(estimatedTime - actualTime):F2} секунд");
+
+            while (true)
             {
-                using (WebClient client = new WebClient())
+                Console.WriteLine("Натисніть p - пауза, r - відновити, q - вихід");
+                var key = Console.ReadKey(true).Key;
+
+                if (key == ConsoleKey.P)
                 {
-                    client.DownloadFile(new Uri(imageUrl), filePath);
+                    Console.WriteLine("Пауза ...");
+                    DataBaseManager.mre.Reset();
+                }
+                else if (key == ConsoleKey.R)
+                {
+                    Console.WriteLine("Відновлено ...");
+                    DataBaseManager.mre.Set();
+                }
+                else if (key == ConsoleKey.Q)
+                {
+                    Console.WriteLine("Вихід без збереження...");
+                    DataBaseManager.mre.Set();
+                    cts.Cancel();
+                    break;
                 }
             }
-            catch (WebException ex)
-            {
-                Console.WriteLine($"Помилка завантаження фото: {ex.Message}");
-                return "default.jpg"; 
-            }
-
-            return filePath;
         }
+        //public static void insert(int count, DataBaseManager dataBaseManager)
+        //{
+        //    var faker = new Faker<Banan>()
+        //        .RuleFor(u => u.FirstName, f => f.Name.FirstName())
+        //        .RuleFor(u => u.LastName, f => f.Name.LastName())
+        //        .RuleFor(u => u.Image, f => f.Internet.Avatar())
+        //        .RuleFor(u => u.Phone, f => f.Phone.PhoneNumber("+380 ## ### ## ##"))
+        //        .RuleFor(u => u.Sex, f => f.Random.Bool());
+
+        //    for (int i = 0; i < count; i++)
+        //    {
+        //        Banan newUser = faker.Generate();
+        //        newUser.Image = SaveImage( newUser.FirstName); 
+        //        dataBaseManager.AddUser(newUser);
+        //    }
+        //}
+        //public static string SaveImage(string userName)
+        //{
+        //    string folderPath = "D:\\Git\\project_c_13\\ConsoleApp40\\image";
+        //    if (!Directory.Exists(folderPath))
+        //    {
+        //        Directory.CreateDirectory(folderPath);
+        //    }
+
+        //    string fileName = $"{userName}_{Guid.NewGuid()}.jpg";
+        //    string filePath = Path.Combine(folderPath, fileName);
+
+        //    string imageUrl = "https://thispersondoesnotexist.com/"; 
+
+        //    try
+        //    {
+        //        using (WebClient client = new WebClient())
+        //        {
+        //            client.DownloadFile(new Uri(imageUrl), filePath);
+        //        }
+        //    }
+        //    catch (WebException ex)
+        //    {
+        //        Console.WriteLine($"Помилка завантаження фото: {ex.Message}");
+        //        return "default.jpg"; 
+        //    }
+
+        //    return filePath;
+        //}
     }
 }
